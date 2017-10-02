@@ -2,7 +2,7 @@ pragma solidity ^0.4.15;
 
 contract BettingContract {
 	/* Standard state variables */
-	address owner;
+	address public owner;
 	address public gamblerA;
 	address public gamblerB;
 	address public oracle;
@@ -26,12 +26,14 @@ contract BettingContract {
 
 	/* Uh Oh, what are these? */
 	modifier OwnerOnly() {
-		require(msg.sender == owner);
+		if(msg.sender == owner){
 		_;
+		}
 	}
 	modifier OracleOnly() {
-		require(msg.sender == oracle);
+		if(msg.sender == oracle){
 		_;
+		}
 	}
 
 	/* Constructor function, where owner and outcomes are set */
@@ -42,70 +44,80 @@ contract BettingContract {
 
 	/* Owner chooses their trusted Oracle */
 	function chooseOracle(address _oracle) OwnerOnly() returns (address) {
+		if(oracle==0){
 		oracle = _oracle;
+		return oracle;
+		}
 	}
 
 	/* Gamblers place their bets, preferably after calling checkOutcomes */
 	function makeBet(uint _outcome) payable returns (bool) {
-		require(!bets[msg.sender].initialized && msg.sender != owner && oracle != 0 && msg.sender != oracle);
-
-		if(!bets[gamblerA].initialized){
-			gamblerA = msg.sender;
-			bets[gamblerB].amount = msg.value;
-			bets[gamblerB].outcome = _outcome;
-			bets[gamblerB].initialized = true;
-			BetMade(gamblerA);
-		}
-		else if(!bets[gamblerB].initialized){
-			gamblerB = msg.sender;
-			bets[gamblerB].amount = msg.value;
-			bets[gamblerB].outcome = _outcome;
-			bets[gamblerB].initialized = true;
-			BetMade(gamblerB);
-		}
-		else{
-			BetClosed();
+		if(msg.sender == owner || msg.sender == oracle){
 			return false;
 		}
-		return true;
+		bool bet = false;
+		var allowed = checkOutcomes();
+		for(uint x = 0; x < allowed.length; x++){
+			if(_outcome==allowed[x]){
+				if(gamblerA == 0){
+					gamblerA = msg.sender;
+					bet = true;
+				}
+				else if(gamblerB == 0){
+					gamblerB = msg.sender;
+					bet = true;
+				}
+				else{
+					return false;
+				}
+			}
+			if(bet){
+				Bet memory a = Bet({outcome:_outcome, amount:msg.value, initialized:true});
+				bets[msg.sender] = a;
+				BetMade(msg.sender);
+				return true;
+			}
+		}
+		return false;
 	}
 
 	/* The oracle chooses which outcome wins */
 	function makeDecision(uint _outcome) OracleOnly() {
-		require(bets[gamblerA].initialized && bets[gamblerB].initialized);
+		BetClosed();
+		if(gamblerA != 0 && gamblerB != 0){
+		uint pot = bets[gamblerA].amount + bets[gamblerB].amount;
 		if(bets[gamblerA].outcome == bets[gamblerB].outcome){
 			winnings[gamblerA] = bets[gamblerA].amount;
-			bets[gamblerA].amount = 0;
 			winnings[gamblerB] = bets[gamblerB].amount;
-			bets[gamblerB].amount = 0;
+			winnings[oracle] = 0;
 		}
 		else if(bets[gamblerA].outcome == _outcome){
-			winnings[gamblerA] = bets[gamblerA].amount + bets[gamblerB].amount;
-			bets[gamblerA].amount = 0;
-			bets[gamblerB].amount = 0;
+			winnings[gamblerA] = pot;
+			winnings[gamblerB] = 0;
+			winnings[oracle] = 0;
 		}
 		else if(bets[gamblerB].outcome == _outcome){
-			winnings[gamblerB] = bets[gamblerA].amount + bets[gamblerB].amount;
-			bets[gamblerA].amount = 0;
-			bets[gamblerB].amount = 0;
+			winnings[gamblerA] = 0;
+			winnings[gamblerB] = pot;
+			winnings[oracle] = 0;
 		}
 		else{
-			winnings[oracle] = bets[gamblerA].amount + bets[gamblerB].amount;
-			bets[gamblerA].amount = 0;
-			bets[gamblerB].amount = 0;
+			winnings[gamblerA] = 0;
+			winnings[gamblerB] = 0;
+			winnings[oracle] = pot;
 		}
 		contractReset();
+		}
 	}
 
 	/* Allow anyone to withdraw their winnings safely (if they have enough) */
 	function withdraw(uint withdrawAmount) returns (uint remainingBal) {
-		if(winnings[msg.sender] >= withdrawAmount){
+
+		require(winnings[msg.sender] >= withdrawAmount);
 			winnings[msg.sender] -= withdrawAmount;
-			if(!msg.sender.send(withdrawAmount)){
-				winnings[msg.sender] += withdrawAmount;
-			}
-			return winnings[msg.sender];
-		}
+			msg.sender.transfer(withdrawAmount);
+			remainingBal =  winnings[msg.sender];
+
 	}
 
 	/* Allow anyone to check the outcomes they can bet on */
@@ -120,9 +132,11 @@ contract BettingContract {
 
 	/* Call delete() to reset certain state variables. Which ones? That's upto you to decide */
 	function contractReset() private {
-		delete outcomes;
-		delete gamblerA;
-		delete gamblerB;
+		delete(outcomes);
+		delete(bets[gamblerA]);
+		delete(bets[gamblerB]);
+		delete(gamblerA);
+		delete(gamblerB);
 	}
 
 	/* Fallback function */
